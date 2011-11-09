@@ -1,0 +1,260 @@
+#!/bin/sh
+#
+# Copyright (c) 2010 Jonas Fonseca <jonas.fonseca@savoirfairelinux.com>
+#
+# Mavenize a Liferay SDK Plugin by wrapping the ant script.
+#
+
+PWD="$(pwd)"
+REPO="$HOME/.m2/liferay-sdk-maven"
+
+PLUGIN_ID="$(basename "$PWD")"
+PACKAGING=war
+TYPE="$(echo "$PLUGIN_ID" | sed 's/.*-//')"
+SRCDIR=docroot/WEB-INF/src
+OUTDIR=docroot/WEB-INF/classes
+LIBDIR=docroot/WEB-INF/lib
+PKGPROPS=docroot/WEB-INF/liferay-plugin-package.properties
+
+case "$TYPE" in
+client)
+	PACKAGING=jar
+	SRCDIR=src
+	OUTDIR=classes
+	LIBDIR=lib
+	PKGPROPS=liferay-plugin-package.properties
+	;;
+esac
+
+property() {
+	path="$(dirname "$1")/$(basename "$1" .properties)"
+	name="$2"
+	prop=""
+
+	if test -e "$path.$USER.properties"; then
+		prop="$(sed -n "s/\s*$name=//p" < "$path.$USER.properties")"
+	fi
+
+	if test -z "$prop"; then
+		prop="$(sed -n "s/\s*$name=//p" < "$path.properties")"
+	fi
+	echo "$prop" | sed 's/\s*$//'
+}
+
+NAME="$(property "$PKGPROPS" "name")"
+LPVERSION="$(property "../../build.properties" "lp.version")"
+VERSION="$LPVERSION.$(property "$PKGPROPS" "module-incremental-version")"
+
+add_lib() {
+	artifact_id="$(basename "$2" .jar)"
+	dir="$REPO/$(echo "$1" | sed 's,[.],/,g')/$artifact_id/$LPVERSION"
+	mkdir -p "$dir"
+	base_path="$dir/$artifact_id-$LPVERSION"
+	cp "$2" "$base_path.jar"
+	md5sum < "$2" | cut -d' ' -f 1 > "$base_path.jar.md5"
+	cat > "$base_path.pom" <<EOF
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<groupId>$1</groupId>
+	<artifactId>$artifact_id</artifactId>
+	<name>$1.$artifact_id</name>
+	<version>$LPVERSION</version>
+</project>
+EOF
+	md5sum < "$base_path.pom" | cut -d' ' -f 1 > "$base_path.pom.md5"
+
+	cat <<EOF
+		<dependency>
+			<groupId>$1</groupId>
+			<artifactId>$artifact_id</artifactId>
+			<version>$LPVERSION</version>
+		</dependency>
+EOF
+}
+
+portal_libs() {
+	test ! -e "$PKGPROPS" && return
+	grep "\.jar" "$PKGPROPS" | sed 's/,.*//' | while read lib; do
+		add_lib "com.liferay.sdk.portal" "../../../bundles/tomcat-6.0.26/webapps/ROOT/WEB-INF/lib/$lib"
+	done
+}
+
+plugin_libs() {
+
+	for lib in $LIBDIR/*.jar; do
+		add_lib "com.liferay.sdk.plugin" "$lib"
+	done
+}
+
+portlet_libs() {
+	test "$PACKAGING" = "jar" && return
+	cat <<EOF
+		<dependency>
+			<groupId>javax.portlet</groupId>
+			<artifactId>portlet-api</artifactId>
+			<version>2.0</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>javax.servlet</groupId>
+			<artifactId>servlet-api</artifactId>
+			<version>2.4</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>javax.servlet.jsp</groupId>
+			<artifactId>jsp-api</artifactId>
+			<version>2.0</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>javax.servlet</groupId>
+			<artifactId>jstl</artifactId>
+			<version>1.2</version>
+		</dependency>
+EOF
+}
+
+warplugin() {
+	test "$PACKAGING" = "jar" && return
+	cat <<EOF
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-war-plugin</artifactId>
+				<version>2.1</version>
+				<configuration>
+					<warSourceDirectory>docroot</warSourceDirectory>
+				</configuration>
+			</plugin>
+EOF
+}
+
+cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<groupId>com.liferay.sdk.$TYPE</groupId>
+	<artifactId>$PLUGIN_ID</artifactId>
+	<packaging>$PACKAGING</packaging>
+	<name>$NAME</name>
+	<version>$VERSION</version>
+	<properties>
+		<liferay.auto.deploy.dir>../bundles/deploy</liferay.auto.deploy.dir>
+		<liferay.version>6.0.5</liferay.version>
+		<spring.version>3.0.4.RELEASE</spring.version>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding> 
+	</properties>
+	<build>
+		<sourceDirectory>$SRCDIR</sourceDirectory>
+		<outputDirectory>$OUTDIR</outputDirectory>
+		<plugins>
+			<plugin>
+				<artifactId>maven-antrun-plugin</artifactId>
+				<version>1.6</version>
+				<executions>
+					<execution>
+						<id>clean</id>
+						<phase>pre-clean</phase>
+						<configuration>
+							<target>
+								<ant antfile="build.xml" target="clean"/>
+							</target>
+						</configuration>
+						<goals>
+							<goal>run</goal>
+						</goals>
+					</execution>
+					<execution>
+						<id>compile</id>
+						<phase>compile</phase>
+						<configuration>
+							<target>
+								<ant antfile="build.xml" target="compile"/>
+							</target>
+						</configuration>
+						<goals>
+							<goal>run</goal>
+						</goals>
+					</execution>
+					<execution>
+						<id>package</id>
+						<phase>package</phase>
+						<configuration>
+							<target>
+								<ant antfile="build.xml" target="war"/>
+							</target>
+						</configuration>
+						<goals>
+							<goal>run</goal>
+						</goals>
+					</execution>
+					<execution>
+						<id>install</id>
+						<phase>install</phase>
+						<configuration>
+							<target>
+								<ant antfile="build.xml" target="deploy"/>
+							</target>
+						</configuration>
+						<goals>
+							<goal>run</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>com.liferay.maven.plugins</groupId>
+				<artifactId>liferay-maven-plugin</artifactId>
+				<version>\${liferay.version}</version>
+				<configuration>
+					<liferayVersion>\${liferay.version}</liferayVersion>
+					<autoDeployDir>\${liferay.auto.deploy.dir}</autoDeployDir>
+				</configuration>
+			</plugin>
+			<plugin>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<configuration>
+					<encoding>UTF-8</encoding>
+					<source>1.5</source>
+					<target>1.5</target>
+				</configuration>
+			</plugin>
+			$(warplugin)
+		</plugins>
+	</build>
+	<dependencies>
+		<!-- Liferay Dependencies -->
+		<dependency>
+			<groupId>com.liferay.portal</groupId>
+			<artifactId>portal-service</artifactId>
+			<version>\${liferay.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>com.liferay.portal</groupId>
+			<artifactId>util-bridges</artifactId>
+			<version>\${liferay.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>com.liferay.portal</groupId>
+			<artifactId>util-taglib</artifactId>
+			<version>\${liferay.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>com.liferay.portal</groupId>
+			<artifactId>util-java</artifactId>
+			<version>\${liferay.version}</version>
+		</dependency>
+
+		$(portal_libs)
+		$(plugin_libs)
+		$(portlet_libs)
+	</dependencies>
+	<repositories>
+		<repository>
+			<id>liferay-sdk-maven</id>
+			<url>file://$REPO</url>
+		</repository>
+	</repositories>
+</project>
+EOF

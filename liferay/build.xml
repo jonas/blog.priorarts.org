@@ -1,0 +1,59 @@
+<?xml version="1.0"?>
+<!--
+  - Copyright (c) 2011 Jonas Fonseca <jonas.fonseca@savoirfairelinux.com>
+  -->
+
+<project name="portlet" basedir="." default="deploy" xmlns:antelope="antlib:ise.antelope.tasks">
+ <import file="../build-common-portlet.xml" />
+
+ <property name="native.lang.dir" value="docroot/WEB-INF/src/content/" />
+ <property name="lang.dir" value="docroot/WEB-INF/classes/content/" />
+
+ <target name="compile" depends="clean">
+  <antcall target="build-common-plugin.compile" />
+  <antcall target="build-language-files" />
+ </target>
+
+ <target name="build-language-files">
+  <for param="lang.native.file">
+   <path>
+    <fileset dir="${native.lang.dir}" includes="**/Language_*.properties" />
+   </path>
+   <sequential>
+    <antelope:grep in="@{lang.native.file}" regex="(.*)_(.*).properties" group="2" property="lang.code" />
+
+    <copy tofile="${lang.dir}/Language_${lang.code}.properties"
+     file="@{lang.native.file}" />
+    <!-- Uncomment to run the translation through native2ascii
+    <antcall target="build-lang-native2ascii">
+     <param name="lang.file" value="Language" />
+    </antcall>
+    -->
+
+    <property file="${lang.dir}/Language_${lang.code}.properties" prefix="build.lang.${lang.code}" />
+
+    <propertyset id="build.lang.titles">
+     <propertyref prefix="build.lang.${lang.code}.javax.portlet.title"/>
+    </propertyset>
+
+    <for list="${toString:build.lang.titles}" param="build.lang.title">
+     <sequential>
+      <antelope:grep in="@{build.lang.title}"
+       regex=".*.javax.portlet.title.(.*)=(.*)" group="1"
+       property="lang.portlet" />
+      <antelope:grep in="@{build.lang.title}"
+       regex=".*.javax.portlet.title.(.*)=(.*)" group="2"
+       property="lang.title" />
+
+      <copy tofile="${lang.dir}/Language_${lang.portlet}_${lang.code}.properties"
+       file="${lang.dir}/Language_${lang.code}.properties" />
+      <propertyfile file="${lang.dir}/Language_${lang.portlet}_${lang.code}.properties"
+       comment="Generated from @{lang.native.file}">
+       <entry key="javax.portlet.title" value="${lang.title}" />
+      </propertyfile>
+     </sequential>
+    </for>
+   </sequential>
+  </for>
+ </target>
+</project>
